@@ -93,8 +93,3 @@ After this, only SSH, local DNS and the DHCP client are listening. The full outp
 7. **After a restart SSH timed out again.** The VM was running but the port forward was gone (`info usernet` showed it empty). **Fix:** I added the forward again. All the hardening settings were still in place.
 8. **My first config backup could be read by any user and contains the server's private SSH host keys.** **Fix:** folder set to `700`, archive set to `600`, and backups are not in this repo.
 9. **The VM clock was in UTC.** **Fix:** `sudo timedatectl set-timezone Asia/Kolkata`, then I set the cron time in IST.
-
-## Notes
-
-- No private keys, passwords or backup archives are in this repository.
-- Only the server's own config files I wrote are included. I left out `50-cloud-init.conf` and `/etc/ssh` host keys.
