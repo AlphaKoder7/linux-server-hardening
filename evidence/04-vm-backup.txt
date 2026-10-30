@@ -1,0 +1,5 @@
+total 4.1G
+-rwxr--r-- 1 abini abini 4.2G Oct 29 16:24 hardening-lab-pre-hardening.qcow2
+No errors were found on the image.
+67268/409600 = 16.42% allocated, 7.80% fragmented, 0.00% compressed clusters
+Image end offset: 4412080128

@@ -1,0 +1,291 @@
+BEFORE-STATES AND ONE-TIME EVENTS
+Captured during the build on 2026-10-29 (IST/UTC as shown). These outputs cannot be
+reproduced after the changes were made, so they are recorded here as evidence.
+Host prompt: "~ >" (Pop!_OS). VM prompt: devops@hardening-server.
+
+======================================================================
+1. HOST CANNOT REACH VM (QEMU user-mode NAT) AND THE PORT-FORWARD FIX
+======================================================================
+Symptom (earlier): ssh, nc and ssh-copy-id to 10.0.2.15:22 from the host timed out.
+VM interface: enp1s0, 10.0.2.15/24 (QEMU user-mode networking).
+
+Fix, run on host:
+  virsh -c qemu:///session qemu-monitor-command ubuntu24.04- --hmp 'hostfwd_add tcp:127.0.0.1:2222-:22'
+  virsh -c qemu:///session qemu-monitor-command ubuntu24.04- --hmp 'info usernet'
+
+Output:
+  Hub -1 (hostnet0):
+    Protocol[State]    FD  Source Address  Port   Dest. Address  Port RecvQ SendQ
+    TCP[HOST_FORWARD] 152       127.0.0.1  2222       10.0.2.15    22     0     0
+
+======================================================================
+2. SSH KEY INSTALLED AND KEY LOGIN VERIFIED (before password auth was disabled)
+======================================================================
+  ssh-copy-id -i ~/.ssh/id_ed25519.pub -p 2222 devops@127.0.0.1
+  ...
+  Number of key(s) added: 1
+
+  ssh -p 2222 devops@127.0.0.1
+  Welcome to Ubuntu 24.04.5 LTS (GNU/Linux 6.8.0-147-generic x86_64)
+  ...
+  devops@hardening-server:~$        (no password prompt)
+
+Note: connections from the host appear inside the VM as coming from 10.0.2.2
+(QEMU NAT gateway): "Last login: ... from 10.0.2.2".
+
+======================================================================
+3. SSH SETTINGS BEFORE HARDENING
+======================================================================
+devops@hardening-server:~$ sudo sshd -T | grep -E '^(permitrootlogin|passwordauthentication|pubkeyauthentication|kbdinteractiveauthentication|usepam)'
+usepam yes
+permitrootlogin without-password
+pubkeyauthentication yes
+passwordauthentication yes
+kbdinteractiveauthentication no
+
+devops@hardening-server:~$ ls -la /etc/ssh/sshd_config.d/
+-rw------- 1 root root   27 Oct 28 20:42 50-cloud-init.conf
+
+devops@hardening-server:~$ sudo cat /etc/ssh/sshd_config.d/50-cloud-init.conf
+PasswordAuthentication yes
+
+AFTER (for comparison):
+permitrootlogin no
+pubkeyauthentication yes
+passwordauthentication no
+-rw-r--r-- 1 root root   19 Oct 29 11:09 01-hardening.conf
+-rw-r--r-- 1 root root   26 Oct 29 11:10 02-hardening.conf
+-rw------- 1 root root   27 Oct 28 20:42 50-cloud-init.conf
+
+Password login refused (run on host):
+  ssh -p 2222 -o PubkeyAuthentication=no -o PreferredAuthentications=password devops@127.0.0.1
+  devops@127.0.0.1: Permission denied (publickey).
+
+======================================================================
+4. VM SNAPSHOT: FAILURE AND DISK-COPY FALLBACK
+======================================================================
+GNOME Boxes snapshot button: "Failed to create snapshot of hardening-lab"
+
+  virsh -c qemu:///session snapshot-create-as ubuntu24.04- pre-hardening "Before SSH and firewall hardening"
+  error: Operation not supported: internal snapshots of a VM with pflash based firmware are not supported
+
+Image check before copying:
+  file format: qcow2
+  virtual size: 25 GiB (26843545600 bytes)
+  disk size: 4.11 GiB
+  corrupt: false
+  Filesystem      Size  Used Avail Use% Mounted on
+  /dev/nvme0n1p2  457G  355G   80G  82% /
+
+VM powered off cleanly (sudo poweroff), state confirmed:
+  ubuntu24.04-   shut off
+
+Fallback copy and verification:
+  cp --sparse=always "$IMG" ~/vm-backups/hardening-lab-pre-hardening.qcow2
+  -rwxr--r-- 1 abini abini 4.2G Oct 29 16:24 hardening-lab-pre-hardening.qcow2
+  qemu-img check ~/vm-backups/hardening-lab-pre-hardening.qcow2
+  No errors were found on the image.
+  67268/409600 = 16.42% allocated, 7.80% fragmented, 0.00% compressed clusters
+
+======================================================================
+5. UFW BEFORE ENABLING
+======================================================================
+devops@hardening-server:~$ sudo ufw status verbose
+Status: inactive
+devops@hardening-server:~$ sudo ufw default deny incoming
+Default incoming policy changed to 'deny'
+devops@hardening-server:~$ sudo ufw default allow outgoing
+Default outgoing policy changed to 'allow'
+devops@hardening-server:~$ sudo ufw allow 22/tcp
+Rules updated
+Rules updated (v6)
+devops@hardening-server:~$ sudo ufw show added
+ufw allow 22/tcp
+devops@hardening-server:~$ sudo ufw enable
+Firewall is active and enabled on system startup
+
+AFTER:
+Status: active
+Default: deny (incoming), allow (outgoing), disabled (routed)
+22/tcp                     ALLOW IN    Anywhere
+22/tcp (v6)                ALLOW IN    Anywhere (v6)
+(new SSH login from host still worked after enabling)
+
+======================================================================
+6. FAIL2BAN: DEFAULT FILTER VS AGGRESSIVE MODE, AND BAN/UNBAN
+======================================================================
+Config applied (see configs/jail.local): bantime 5m, findtime 10m, maxretry 3, mode aggressive.
+
+Default filter, key-only server:
+  sudo fail2ban-regex systemd-journal sshd | tail
+  Lines: 36 lines, 9 ignored, 0 matched, 27 missed
+  (log line seen: "Connection closed by authenticating user devops 10.0.2.2 ... [preauth]")
+
+Aggressive mode:
+  sudo fail2ban-regex systemd-journal 'sshd[mode=aggressive]' | grep -E '^(Failregex|Lines)'
+  Failregex: 9 total
+  Lines: 36 lines, 5 ignored, 4 matched, 27 missed
+
+After switching, counters respond:
+  Currently failed: 1
+  Total failed:     2
+
+Ban and unban (from /var/log/fail2ban.log):
+  2026-10-29 11:45:46,582 fail2ban.actions [1934]: NOTICE  [sshd] Ban 10.0.2.2
+  2026-10-29 11:50:46,015 fail2ban.actions [1934]: NOTICE  [sshd] Unban 10.0.2.2
+
+  Status for the jail: sshd
+  |- Currently banned: 0
+  |- Total banned:     1
+
+======================================================================
+7. SERVICE AND PORT AUDIT BEFORE DISABLING ANYTHING
+======================================================================
+devops@hardening-server:~$ sudo ss -tulpn
+udp   UNCONN 0 0   127.0.0.54:53       users:(("systemd-resolve",pid=709,fd=16))
+udp   UNCONN 0 0   127.0.0.53%lo:53    users:(("systemd-resolve",pid=709,fd=14))
+udp   UNCONN 0 0   10.0.2.15%enp1s0:68 users:(("systemd-network",pid=659,fd=21))
+udp   UNCONN 0 0   0.0.0.0:5353        users:(("avahi-daemon",pid=790,fd=12))
+udp   UNCONN 0 0   0.0.0.0:42745       users:(("avahi-daemon",pid=790,fd=14))
+udp   UNCONN 0 0   [::]:57467          users:(("avahi-daemon",pid=790,fd=15))
+udp   UNCONN 0 0   [::]:5353           users:(("avahi-daemon",pid=790,fd=13))
+tcp   LISTEN 0 4096 0.0.0.0:22         users:(("sshd",pid=957,fd=3),("systemd",pid=1,fd=110))
+tcp   LISTEN 0 10   127.0.0.1:9843     users:(("spice-webdavd",pid=821,fd=5))
+tcp   LISTEN 0 4096 127.0.0.54:53      users:(("systemd-resolve",pid=709,fd=17))
+tcp   LISTEN 0 4096 127.0.0.53%lo:53   users:(("systemd-resolve",pid=709,fd=15))
+tcp   LISTEN 0 4096 [::]:22            users:(("sshd",pid=957,fd=4),("systemd",pid=1,fd=112))
+
+Running services before:
+avahi-daemon, cron, dbus, fail2ban, fwupd, getty@tty1, ModemManager, multipathd, polkit,
+rsyslog, spice-webdavd, ssh, systemd-journald, systemd-logind, systemd-networkd,
+systemd-resolved, systemd-timesyncd, systemd-udevd, udisks2, unattended-upgrades,
+upower, user@1000                                                    (22 units)
+
+Enabled at boot before (50 unit files): apparmor, apport, avahi-daemon, blk-availability,
+cloud-config, cloud-final, cloud-init-local, cloud-init, console-setup, cron, dmesg,
+e2scrub_reap, fail2ban, finalrd, getty@, gpu-manager, grub-common, grub-initrd-fallback,
+keyboard-setup, lvm2-monitor, ModemManager, multipathd, networkd-dispatcher, open-iscsi,
+open-vm-tools, pollinate, rsyslog, secureboot-db, setvtrgb, snapd.apparmor,
+snapd.autoimport, snapd.core-fixup, snapd.recovery-chooser-trigger, snapd.seeded, snapd,
+snapd.system-shutdown, ssh, sysstat, systemd-networkd-wait-online, systemd-networkd,
+systemd-pstore, systemd-resolved, systemd-timesyncd, thermald, ua-reboot-cmds,
+ubuntu-advantage, udisks2, ufw, unattended-upgrades, vgauth
+
+Disabled/removed: avahi-daemon (service+socket), ModemManager, spice-webdavd (package purged).
+Reviewed and kept: multipathd, open-iscsi, open-vm-tools, vgauth, snapd, fwupd, udisks2,
+upower, thermald (storage/boot/firmware related; low risk; not worth changing on a lab VM).
+
+AFTER disabling, sudo ss -tulpn showed only:
+  127.0.0.54:53, 127.0.0.53%lo:53 (systemd-resolved), 10.0.2.15%enp1s0:68 (DHCP client),
+  0.0.0.0:22 and [::]:22 (sshd)
+
+======================================================================
+8. AUTOMATIC SECURITY UPDATES BEFORE CHANGES
+======================================================================
+cat /etc/apt/apt.conf.d/20auto-upgrades
+APT::Periodic::Update-Package-Lists "1";
+APT::Periodic::Unattended-Upgrade "1";
+
+Active settings in 50unattended-upgrades:
+Unattended-Upgrade::Allowed-Origins {
+	"${distro_id}:${distro_codename}";
+	"${distro_id}:${distro_codename}-security";
+	"${distro_id}ESMApps:${distro_codename}-apps-security";
+	"${distro_id}ESM:${distro_codename}-infra-security";
+};
+Unattended-Upgrade::Package-Blacklist { };
+Unattended-Upgrade::DevRelease "auto";
+
+Dry run: "No packages found that can be upgraded unattended and no pending auto-removals"
+
+After adding 52unattended-upgrades-local:
+Unattended-Upgrade::Remove-Unused-Dependencies "true";
+Unattended-Upgrade::Automatic-Reboot "false";
+Timers: apt-daily.timer and apt-daily-upgrade.timer scheduled.
+sudo unattended-upgrade --dry-run; echo "exit code: $?"   ->   exit code: 0
+
+======================================================================
+9. CONFIG BACKUP AND RESTORE DEMONSTRATION
+======================================================================
+Backup (permissions tightened because /etc/ssh contains private host keys):
+  drwx------ 2 root root 4096 Oct 29 11:59 /var/backups/config
+  -rw------- 1 root root 29275 Oct 29 11:59 config-2026-10-29.tar.gz
+
+Demo on /etc/apt/apt.conf.d/52unattended-upgrades-local:
+  After damaging the file:  THIS FILE IS BROKEN
+    b26b877945108349ae8c7560e38c50d3aabff1f6fcdd687225916081aa2ca4e0
+  Restore: sudo tar xzf /var/backups/config/config-2026-10-29.tar.gz -C / etc/apt/apt.conf.d/52unattended-upgrades-local
+  After restore:
+    Unattended-Upgrade::Remove-Unused-Dependencies "true";
+    Unattended-Upgrade::Automatic-Reboot "false";
+    89eba8f7278a171277e3035452bbe0e1a17ea1fa15fe8d7c613dbcf9c9bf80e0
+
+Proof the restored file equals the archived copy:
+  sudo tar xzOf <archive> etc/apt/apt.conf.d/52unattended-upgrades-local | sha256sum
+  89eba8f7278a171277e3035452bbe0e1a17ea1fa15fe8d7c613dbcf9c9bf80e0  -
+  sha256sum /etc/apt/apt.conf.d/52unattended-upgrades-local
+  89eba8f7278a171277e3035452bbe0e1a17ea1fa15fe8d7c613dbcf9c9bf80e0  /etc/apt/apt.conf.d/52unattended-upgrades-local
+
+======================================================================
+10. MAINTENANCE SCRIPT: FIRST MANUAL RUN (2026-10-29 12:09 UTC)
+======================================================================
+=== Maintenance report: Thu Oct 29 12:09:42 PM UTC 2026 on hardening-server ===
+
+--- 1. Available updates ---
+0 upgraded, 0 newly installed, 0 to remove and 0 not upgraded.
+No reboot required
+
+--- 2. Disk and memory ---
+Filesystem                         Size  Used Avail Use% Mounted on
+/dev/mapper/ubuntu--vg-ubuntu--lv   22G  5.6G   15G  28% /
+               total        used        free      shared  buff/cache   available
+Mem:           2.8Gi       475Mi       2.1Gi       5.1Mi       449Mi       2.4Gi
+Swap:          2.8Gi          0B       2.8Gi
+ 12:09:43 up  1:14,  3 users,  load average: 0.00, 0.00, 0.00
+
+--- 3. Critical services ---
+ssh: active
+fail2ban: active
+ufw: active
+cron: active
+unattended-upgrades: active
+Failed units:
+  none
+
+--- 4. Config backup ---
+Created /var/backups/config/auto-config-2026-10-29.tar.gz
+
+=== End of report ===
+
+======================================================================
+11. CRON SCHEDULING PROOF
+======================================================================
+Test schedule (every 2 minutes), journal excerpt:
+  Oct 29 12:24:01 hardening-server CRON[2883]: (root) CMD (/usr/local/sbin/maintenance.sh >> /var/log/maintenance/cron.log 2>&1)
+
+Final schedule (daily 12:30 IST), journal excerpt from 2026-10-30:
+  Oct 30 12:19:01 hardening-server cron[1002]: (*system*maintenance) RELOAD (/etc/cron.d/maintenance)
+  Oct 30 12:30:01 hardening-server CRON[2344]: (root) CMD (/usr/local/sbin/maintenance.sh >> /var/log/maintenance/cron.log 2>&1)
+  -rw-r--r-- 1 root root 1071 Oct 30 12:30 report-2026-10-30.log
+  First line of that report: === Maintenance report: Fri Oct 30 12:30:01 PM IST 2026 on hardening-server ===
+
+======================================================================
+12. TIMEZONE CHANGE
+======================================================================
+Before: VM clock in UTC (default).
+  sudo timedatectl set-timezone Asia/Kolkata
+  Local time: Thu 2026-10-29 17:56:59 IST
+  Time zone: Asia/Kolkata (IST, +0530)
+  System clock synchronized: yes
+  NTP service: active
+
+======================================================================
+13. LOG RETENTION BEFORE CHANGES
+======================================================================
+journalctl --disk-usage -> Archived and active journals take up 68.8M in the file system.
+/etc/systemd/journald.conf: only [Journal] (defaults, no explicit limits)
+/etc/logrotate.conf: weekly, su root adm, rotate 4, create, include /etc/logrotate.d
+/etc/logrotate.d before: alternatives apport apt bootlog btmp cloud-init dpkg fail2ban
+  rsyslog ubuntu-pro-client ufw unattended-upgrades wtmp   (no rule for /var/log/maintenance)
+After: systemd-analyze cat-config systemd/journald.conf shows SystemMaxUse=200M, MaxRetentionSec=1month
+logrotate -d /etc/logrotate.d/maintenance -> no error lines.

@@ -1,0 +1,10 @@
+/var/log/maintenance/cron.log {
+    weekly
+    rotate 4
+    compress
+    missingok
+    notifempty
+    postrotate
+        find /var/log/maintenance -name 'report-*.log' -mtime +30 -delete
+    endscript
+}

@@ -1,0 +1,112 @@
+### Date and host
+Fri Oct 30 01:03:36 PM IST 2026
+hardening-server
+               Local time: Fri 2026-10-30 13:03:36 IST
+           Universal time: Fri 2026-10-30 07:33:36 UTC
+                 RTC time: Fri 2026-10-30 07:33:37
+                Time zone: Asia/Kolkata (IST, +0530)
+
+### SSH effective settings
+permitrootlogin no
+pubkeyauthentication yes
+passwordauthentication no
+total 20
+drwxr-xr-x 2 root root 4096 Oct 29 16:40 .
+drwxr-xr-x 4 root root 4096 Oct 29 02:12 ..
+-rw-r--r-- 1 root root   19 Oct 29 16:39 01-hardening.conf
+-rw-r--r-- 1 root root   26 Oct 29 16:40 02-hardening.conf
+-rw------- 1 root root   27 Oct 29 02:12 50-cloud-init.conf
+
+### UFW
+Status: active
+Logging: on (low)
+Default: deny (incoming), allow (outgoing), disabled (routed)
+New profiles: skip
+
+To                         Action      From
+--                         ------      ----
+22/tcp                     ALLOW IN    Anywhere                  
+22/tcp (v6)                ALLOW IN    Anywhere (v6)             
+
+
+### Fail2Ban
+[DEFAULT]
+bantime  = 5m
+findtime = 10m
+maxretry = 3
+
+[sshd]
+enabled = true
+mode = aggressive
+Status for the jail: sshd
+|- Filter
+|  |- Currently failed:	0
+|  |- Total failed:	0
+|  `- Journal matches:	_SYSTEMD_UNIT=sshd.service + _COMM=sshd
+`- Actions
+   |- Currently banned:	0
+   |- Total banned:	0
+   `- Banned IP list:	
+2026-10-29 11:45:46,582 fail2ban.actions        [1934]: NOTICE  [sshd] Ban 10.0.2.2
+2026-10-29 11:50:46,015 fail2ban.actions        [1934]: NOTICE  [sshd] Unban 10.0.2.2
+
+### Listening ports
+Netid State  Recv-Q Send-Q    Local Address:Port Peer Address:PortProcess                                                 
+udp   UNCONN 0      0            127.0.0.54:53        0.0.0.0:*    users:(("systemd-resolve",pid=728,fd=16))              
+udp   UNCONN 0      0         127.0.0.53%lo:53        0.0.0.0:*    users:(("systemd-resolve",pid=728,fd=14))              
+udp   UNCONN 0      0      10.0.2.15%enp1s0:68        0.0.0.0:*    users:(("systemd-network",pid=893,fd=21))              
+tcp   LISTEN 0      4096            0.0.0.0:22        0.0.0.0:*    users:(("sshd",pid=1010,fd=3),("systemd",pid=1,fd=185))
+tcp   LISTEN 0      4096         127.0.0.54:53        0.0.0.0:*    users:(("systemd-resolve",pid=728,fd=17))              
+tcp   LISTEN 0      4096      127.0.0.53%lo:53        0.0.0.0:*    users:(("systemd-resolve",pid=728,fd=15))              
+tcp   LISTEN 0      4096               [::]:22           [::]:*    users:(("sshd",pid=1010,fd=4),("systemd",pid=1,fd=186))
+
+### Automatic updates
+APT::Periodic::Update-Package-Lists "1";
+APT::Periodic::Unattended-Upgrade "1";
+Unattended-Upgrade::Remove-Unused-Dependencies "true";
+Unattended-Upgrade::Automatic-Reboot "false";
+NEXT                            LEFT LAST                           PASSED UNIT                    ACTIVATES
+Fri 2026-10-30 14:33:32 IST 1h 29min Thu 2026-10-29 21:51:34 IST         - apt-daily.timer         apt-daily.service
+Sat 2026-10-31 06:32:35 IST      17h Fri 2026-10-30 17:45:37 IST 47min ago apt-daily-upgrade.timer apt-daily-upgrade.service
+
+2 timers listed.
+Pass --all to see loaded but inactive timers, too.
+
+### Cron
+SHELL=/bin/bash
+PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+30 12 * * * root /usr/local/sbin/maintenance.sh >> /var/log/maintenance/cron.log 2>&1
+Oct 29 17:48:01 hardening-server CRON[2788]: (root) CMD (/usr/local/sbin/maintenance.sh >> /var/log/maintenance/cron.log 2>&1)
+Oct 29 17:50:01 hardening-server CRON[2819]: (root) CMD (/usr/local/sbin/maintenance.sh >> /var/log/maintenance/cron.log 2>&1)
+Oct 29 17:52:01 hardening-server CRON[2852]: (root) CMD (/usr/local/sbin/maintenance.sh >> /var/log/maintenance/cron.log 2>&1)
+Oct 29 17:54:01 hardening-server CRON[2883]: (root) CMD (/usr/local/sbin/maintenance.sh >> /var/log/maintenance/cron.log 2>&1)
+Oct 29 17:56:01 hardening-server CRON[2926]: (root) CMD (/usr/local/sbin/maintenance.sh >> /var/log/maintenance/cron.log 2>&1)
+Oct 30 12:30:01 hardening-server CRON[2344]: (root) CMD (/usr/local/sbin/maintenance.sh >> /var/log/maintenance/cron.log 2>&1)
+
+### Backups and reports
+/var/backups/config/:
+total 96
+-rw------- 1 root root 29275 Oct 29 17:56 auto-config-2026-10-29.tar.gz
+-rw------- 1 root root 29275 Oct 30 12:30 auto-config-2026-10-30.tar.gz
+-rw------- 1 root root 29275 Oct 29 17:29 config-2026-10-29.tar.gz
+
+/var/log/maintenance/:
+total 16
+-rw-r--r-- 1 root root 6076 Oct 30 12:30 cron.log
+-rw-r--r-- 1 root root 1001 Oct 29 17:56 report-2026-10-29.log
+-rw-r--r-- 1 root root 1071 Oct 30 12:30 report-2026-10-30.log
+
+### Log retention
+/var/log/maintenance/cron.log {
+    weekly
+    rotate 4
+    compress
+    missingok
+    notifempty
+    postrotate
+        find /var/log/maintenance -name 'report-*.log' -mtime +30 -delete
+    endscript
+}
+SystemMaxUse=200M
+MaxRetentionSec=1month
+Archived and active journals take up 84.6M in the file system.
